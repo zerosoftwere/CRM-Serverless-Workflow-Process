@@ -1,0 +1,4 @@
+pytest
+pytest-mock
+boto3
+jsonschema==4.23.0

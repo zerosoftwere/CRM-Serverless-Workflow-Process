@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Customer relationship management
+
+  Sample SAM CRM to persist customers opting in for email marketing
+Resources:
+  # CRM state machine
+  CRMStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      DefinitionUri: statemachine/crm.asl.json
+      Name: CRM
+      DefinitionSubstitutions:
+        ValidateSchemaFunctionArn: !GetAtt ValidateSchema.Arn
+        RemoveDuplicateFunctionArn: !GetAtt RemoveDuplicate.Arn
+        LogSchemaErrorFunctionArn: !GetAtt LogSchemaError.Arn
+        DDBPutItem: !Sub arn:${AWS::Partition}:states:::dynamodb:putItem
+        CRMDBTable: !Ref CRMTable
+        CRMSchemaErrorLogGroupName: !Ref CRMSchemaErrorLogGroup
+        CRMSchemaErrorLogStreamName: !Ref CRMSchemaErrorLogStream
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: POST
+            Path: /
+            RestApiId: 
+              Ref: ApiGatewayApi
+      Tracing:
+        Enabled: true
+      Logging:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations: 
+        - CloudWatchLogsLogGroup: 
+            LogGroupArn: !GetAtt CRMEventLogs.Arn
+      Policies: 
+      - LambdaInvokePolicy:
+          FunctionName: !Ref ValidateSchema
+      - LambdaInvokePolicy:
+          FunctionName: !Ref RemoveDuplicate
+      - LambdaInvokePolicy:
+          FunctionName: !Ref LogSchemaError
+      - DynamoDBWritePolicy:
+          TableName: !Ref CRMTable
+      - arn:aws:iam::aws:policy/CloudWatchFullAccess
+
+  # CRM functions
+  ValidateSchema:
+    Type: AWS::Serverless::Function 
+    Properties:
+      FunctionName: ValidateSchema
+      CodeUri: functions/validate_schema/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+      - x86_64
+  RemoveDuplicate:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: RemoveDuplicate
+      CodeUri: functions/remove_duplicate/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+      - x86_64
+  LogSchemaError:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: LogSchemaError
+      CodeUri: functions/log_schema_error/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+      - x86_64
+      Policies:
+      - Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:PutLogEvents
+              - logs:CreateLogStream
+              - logs:DescribeLogStreams
+            Resource: !GetAtt CRMSchemaErrorLogGroup.Arn
+
+  #CRM DynamoDB Table
+  CRMTable:
+    Type: AWS::Serverless::SimpleTable 
+    Properties:
+      TableName: CRMRecords
+      PrimaryKey:
+        Name: Email
+        Type: String
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  # Rest API
+  ApiGatewayApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+  
+  # CRM State machine event logs
+  CRMEventLogs: 
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "/", [ "stepfunctions", CRMEventLogs]]
+      RetentionInDays: 7
+    
+  # Schema validation errors log group and stream
+  CRMSchemaErrorLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: CRMSchemaInvalidSchemaLogs
+      RetentionInDays: 7
+  CRMSchemaErrorLogStream:
+    Type: AWS::Logs::LogStream
+    Properties:
+      LogGroupName: !Ref CRMSchemaErrorLogGroup
+      LogStreamName: InvalidSchemaRecords
+
+  #Application configuration
+  ApplicationResourceGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Name:
+        Fn::Sub: ApplicationInsights-SAM-${AWS::StackName}
+      ResourceQuery:
+        Type: CLOUDFORMATION_STACK_1_0
+  ApplicationInsightsMonitoring:
+    Type: AWS::ApplicationInsights::Application
+    Properties:
+      ResourceGroupName:
+        Ref: ApplicationResourceGroup
+      AutoConfigurationEnabled: 'true'
+
+Globals:
+  Function:
+    Tracing: Active
+  Api:
+    TracingEnabled: true
+
+Outputs:
+  CRMStateMachineArn:
+    Description: CRM State machine ARN
+    Value: !Ref CRMStateMachine
+  CRMStateMachineRoleArn:
+    Description: IAM Role created for CRM State machine based on the specified SAM Policy Templates
+    Value: !GetAtt CRMStateMachineRole.Arn
+  APIEnpoint:
+    Description: HTTPS Endpoint created for CRM
+    Value: !Sub 'https://${ApiGatewayApi}.execute-api.${AWS::Region}.amazonaws.com/prod'

@@ -1,0 +1,133 @@
+{
+    "Comment": "A state machine that does mock stock trading.",
+    "StartAt": "Validete Schema",
+    "States": {
+        "Validete Schema": {
+            "Type": "Task",
+            "Resource": "${ValidateSchemaFunctionArn}",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.TaskFailed"
+                    ],
+                    "IntervalSeconds": 15,
+                    "MaxAttempts": 5,
+                    "BackoffRate": 1.5
+                }
+            ],
+            "ResultSelector": {
+                "records.$": "$$.Execution.Input",
+                "isValid.$": "$.isValid"
+            },
+            "Next": "Is Schema Valid"
+        },
+        "Is Schema Valid": {
+          "Type": "Choice",
+          "Choices": [
+            {
+              "Variable": "$.isValid",
+              "BooleanEquals": true,
+              "Next": "Remove Duplicate"
+            }
+          ],
+          "Default": "Log Failed Validation"
+        },
+        "Log Failed Validation": {
+            "Type": "Task",
+            "Resource": "${LogSchemaErrorFunctionArn}",
+            "Parameters": {
+                "payload.$": "$.records",
+                "logGroupName": "${CRMSchemaErrorLogGroupName}",
+                "logStreamName": "${CRMSchemaErrorLogStreamName}"
+            },
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.TaskFailed"
+                    ],
+                    "IntervalSeconds": 15,
+                    "MaxAttempts": 5,
+                    "BackoffRate": 1.5
+                }
+            ],
+            "End": true
+        },
+        "Remove Duplicate": {
+            "Type": "Task",
+            "InputPath": "$.records",
+            "Resource": "${RemoveDuplicateFunctionArn}",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.TaskFailed"
+                    ],
+                    "IntervalSeconds": 15,
+                    "MaxAttempts": 5,
+                    "BackoffRate": 1.5
+                }
+            ],
+            "Next": "Save Record To DB"
+        },
+        "Save Record To DB": {
+        "Type": "Map",
+        "ItemProcessor": {
+            "ProcessorConfig": {
+            "Mode": "INLINE"
+            },
+            "StartAt": "Choice",
+            "States": {
+            "Choice": {
+                "Type": "Choice",
+                "Choices": [
+                {
+                    "Variable": "$.optIn",
+                    "BooleanEquals": true,
+                    "Next": "Has Opt In"
+                }
+                ],
+                "Default": "Has Not Opt In"
+            },
+            "Has Not Opt In": {
+                "Type": "Succeed"
+            },
+            "Has Opt In": {
+                "Type": "Task",
+                "Resource": "${DDBPutItem}",
+                "Parameters": {
+                "TableName": "${CRMDBTable}",
+                    "Item": {
+                        "Name": {
+                            "S.$": "$.name"
+                        },
+                        "Email": {
+                            "S.$": "$.email"
+                        },
+                        "Interests": {
+                            "L.$": "$.interests"
+                        },
+                        "Timestamp": {
+                            "S.$": "$$.State.EnteredTime"
+                        }
+                    }
+                },
+                "Retry": [
+                    {
+                        "ErrorEquals": [
+                            "States.TaskFailed"
+                        ],
+                        "IntervalSeconds": 20,
+                        "MaxAttempts": 5,
+                        "BackoffRate": 10
+                    }
+                ],
+                "End": true
+            }
+            }
+        },
+        "Next": "Finish"
+        },
+        "Finish": {
+            "Type": "Succeed"
+        }
+    }
+}
