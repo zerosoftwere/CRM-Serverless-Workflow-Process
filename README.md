@@ -13,6 +13,13 @@ This project contains the source code and supporting files for a serverless appl
 The application is designed to implement the following processing workflow:
 
 1. **Schema Validation**: Each incoming record is validated against a predefined schema. Records that do not match the schema are logged for future review.
+    
+    List of: (min 1)
+    - name: string (required)
+    - email: string (required)
+    - optIn: boolean (required)
+    - interests: list(string) (min 1)
+
 2. **Duplicate Removal**: Duplicate records are identified and removed from the workflow.
 3. **Marketing Opt-In Handling**: Records where the user has opted in to receive marketing emails are saved to a DynamoDB table, while others are ignored.
 
@@ -144,6 +151,14 @@ python -m pytest tests/unit -v
 
 ```bash
 AWS_SAM_STACK_NAME="crm" python -m pytest tests/integration -v
+```
+
+## Live Testing
+
+The `APIEnpoint` is printed to the output when the application deploys:
+
+```bash
+curl -XPOST <APIEnpoint> -H 'Content-Type: application/json' -d '[{"name": "John Doe", "email": "john.doe@example.com", "optIn": true, "interests": ["datascience", "python"]}]'
 ```
 
 ## Cleanup
